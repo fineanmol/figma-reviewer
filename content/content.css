@@ -1,0 +1,14 @@
+/* ============================================================
+   content/content.css
+   Injected into pages for element picker highlighting.
+   Uses a very specific selector + !important to avoid
+   being overridden by the page's own styles.
+   ============================================================ */
+
+.__fdr_highlight__ {
+  outline: 2px solid #9b6dff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(155, 109, 255, 0.2) !important;
+  cursor: crosshair !important;
+  transition: outline 0.1s, box-shadow 0.1s !important;
+}
