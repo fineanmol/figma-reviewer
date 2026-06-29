@@ -74,7 +74,11 @@ The overlay appears automatically after fetch, auto-fitted to your page width.
 > **Scale looks wrong (too big / too small)?** Auto-fit assumes your UI fills the viewport, so it's off for centered or narrower layouts. Click **Align overlay to element** and pick the page element that matches the Figma frame (e.g. your page/app container). The overlay snaps to that element's exact on-screen size and position — 1:1, regardless of viewport width or zoom. It then offers to run a full diff of that region so any mismatches you spot become an exportable issue list.
 
 ### Step 5 — Pick an element
-Click **Pick Element on Page** → hover over any element (it highlights in purple) → click it.
+Click **Pick Element on Page** → hover over any element (it highlights in purple; use **↑/↓** to walk up to a parent or down to a child) → click it.
+
+By default **Check children too** is on, so picking an element diffs that element **and its whole subtree** against the matching Figma node tree — inner components are checked, not just the outer layer. Uncheck it to inspect only the single element you clicked.
+
+> **Why not "copy as SVG/PNG"?** A PNG is a flat image with no structure to diff against (that's what the overlay is for), and an SVG export flattens your component into vector paths — it loses the padding/gap/auto-layout/text data. The structured child tree the diff needs already comes from Figma's REST API node document (which includes `children` recursively), so no special copy format is needed — the recursive pick uses that.
 
 ### Step 5b — Or diff the whole tree
 Instead of (or after) picking one element, use the **INSPECT** section:

@@ -764,3 +764,21 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .tree-val { font-family: var(--mono); color: var(--text); font-size: 11px; }
 .tree-val .figma-source { color: var(--figma-blue); font-weight: 700; }
 .tree-val .dom-source { color: var(--accent); font-weight: 700; }
+
+/* ── Recursive-pick checkbox row ─────────────────────── */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.check-row input[type="checkbox"] {
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

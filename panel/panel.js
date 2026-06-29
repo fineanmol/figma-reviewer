@@ -61,6 +61,7 @@ const el = {
   selectedBar:        $('selected-element-bar'),
   selectedInfo:       $('selected-info'),
   repickBtn:          $('repick-btn'),
+  recursivePick:      $('recursive-pick'),
   verifyPageBtn:      $('verify-page-btn'),
   verifyRootBtn:      $('verify-root-btn'),
   diffSection:        $('diff-section'),
@@ -1303,6 +1304,19 @@ el.overlayScaleSlider.addEventListener('input', () => {
 el.matchWidthBtn.addEventListener('click', async () => {
   const fw = figmaFrameWidth();
   if (!fw) { showToast('No frame dimensions to match.', 'warning'); return; }
+
+  // Guard: constraining the page only makes sense for full-page/screen
+  // frames. For a small component (e.g. a 240px button) it would squish the
+  // whole page — so refuse and point the user to "Align overlay to element".
+  if (fw < 768) {
+    showToast(
+      `This node is only ${fw}px wide — that looks like a component, not a screen. ` +
+      `Use “Align overlay to element” instead to scale the overlay to it.`,
+      'warning'
+    );
+    return;
+  }
+
   const res = await sendToPage({ type: 'FDR_MATCH_WIDTH', figmaWidth: fw });
   if (res?.constrainedWidth) {
     showToast(`Page constrained to ${res.constrainedWidth}px — UI reflowed to match Figma`, 'success');
@@ -1386,8 +1400,13 @@ el.updateTokenBtn.addEventListener('click', async () => {
 el.toleranceInput.addEventListener('change', () => {
   state.tolerance = Math.max(0, parseInt(el.toleranceInput.value, 10) || 1);
   chrome.storage.local.set({ reviewTolerance: state.tolerance });
-  // Re-COMPUTE the diff (not just re-render) so status reclassifies.
-  rerunDiff();
+  // Re-COMPUTE the last diff (not just re-render) so status reclassifies.
+  // If the last diff was a recursive/tree scan, re-run that; else single.
+  if (state.treeGroups?.length) {
+    runTreeDiff('picked');
+  } else {
+    rerunDiff();
+  }
   showToast(`Tolerance set to ±${state.tolerance}px`, 'info');
 });
 
@@ -1449,7 +1468,15 @@ chrome.runtime.onMessage.addListener((message) => {
 
     // Remember the picked element so tolerance changes can recompute.
     state.lastDom = dom;
-    rerunDiff();
+
+    // Recursive by default: diff the picked element AND its whole subtree
+    // against the fetched Figma node's tree, so inner components are checked
+    // too — not just the outer layer. Uncheck to inspect just this element.
+    if (el.recursivePick.checked) {
+      runTreeDiff('picked');
+    } else {
+      rerunDiff();
+    }
   }
 
   if (message.type === 'FDR_PICKER_CANCELLED') {

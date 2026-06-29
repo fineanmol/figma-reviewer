@@ -142,7 +142,7 @@
           </button>
           <button id="reset-zoom-btn" class="btn btn-ghost btn-sm hidden">Reset</button>
         </div>
-        <p class="hint-text">Constrains the page to the Figma frame width so your responsive UI <strong>reflows</strong> to that width (real layout, not a zoom). Then px comparisons are exact. Click <strong>Reset</strong> to restore.</p>
+        <p class="hint-text">For <strong>full-page frames</strong>: constrains the page to the frame width so your responsive UI <strong>reflows</strong> to that width (real layout, not a zoom), then px comparisons are exact. <strong>Reset</strong> restores. For a single component, use <strong>Align overlay to element</strong> instead.</p>
       </section>
 
       <!-- Overlay Controls -->
@@ -188,6 +188,10 @@
           </svg>
           Pick Element on Page
         </button>
+        <label class="check-row">
+          <input type="checkbox" id="recursive-pick" checked />
+          <span>Check children too (diff the whole component subtree, not just the outer layer)</span>
+        </label>
         <div id="selected-element-bar" class="selected-bar hidden">
           <span class="selected-label">Selected</span>
           <code id="selected-info" class="selected-code"></code>

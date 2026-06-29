@@ -698,9 +698,12 @@ if (window.__FDR_INJECTED__) {
   // ── Overlay ───────────────────────────────────────────────
   // Remember the overlay's native aspect ratio so resizing keeps it.
   let overlayAspect = null; // height / width
+  // Cache the last overlay image/size so we can restore it if a page
+  // re-render (e.g. an SPA route change) wipes our injected node.
+  let overlayState = { imageUrl: null, width: null, height: null, visible: false };
 
   function ensureOverlay() {
-    if (overlayEl && document.body.contains(overlayEl)) return;
+    if (overlayEl && document.documentElement.contains(overlayEl)) return;
 
     overlayEl = document.createElement('div');
     overlayEl.id = '__fdr_overlay__';
@@ -801,9 +804,18 @@ if (window.__FDR_INJECTED__) {
     });
     overlayEl.appendChild(resizer);
 
-    document.body.appendChild(overlayEl);
+    // Append to <html>, NOT <body> — "Match Figma width" can constrain body's
+    // width, which would clip/mis-size an overlay parented to body.
+    document.documentElement.appendChild(overlayEl);
     makeDraggable(overlayEl, handle);
     makeResizable(overlayEl, img, resizer);
+
+    // Restore last known image/size/visibility (defends against SPA wipes).
+    if (overlayState.imageUrl) {
+      img.src = overlayState.imageUrl;
+      if (overlayState.width)  sizeOverlay(overlayState.width, overlayState.height, true);
+      overlayEl.style.display = overlayState.visible ? 'block' : 'none';
+    }
   }
 
   // Robust drag using Pointer Events + pointer capture. Capture guarantees
@@ -954,6 +966,7 @@ if (window.__FDR_INJECTED__) {
     overlayEl.style.left = `${docX(rect.left)}px`;
     overlayEl.style.top  = `${docY(rect.top)}px`;
     overlayEl.style.display = 'block';
+    overlayState.visible = true;
 
     reportOverlaySize();
     return {
@@ -1236,6 +1249,9 @@ if (window.__FDR_INJECTED__) {
         const img = overlayEl.querySelector('#__fdr_overlay_img__');
         img.src = msg.imageUrl;
         sizeOverlay(msg.width, msg.height, msg.fit !== false);
+        overlayState.imageUrl = msg.imageUrl;
+        overlayState.width = msg.width;
+        overlayState.height = msg.height;
         sendResponse({ ok: true });
         break;
       }
@@ -1243,6 +1259,7 @@ if (window.__FDR_INJECTED__) {
       case 'FDR_TOGGLE_OVERLAY':
         ensureOverlay();
         overlayEl.style.display = msg.visible ? 'block' : 'none';
+        overlayState.visible = !!msg.visible;
         sendResponse({ ok: true, visible: msg.visible });
         break;
 
