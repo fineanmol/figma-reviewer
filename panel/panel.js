@@ -1129,13 +1129,13 @@ async function refreshScaleInfo() {
 
   const ratio = vp.layoutWidth / fw;
   const matched = Math.abs(ratio - 1) <= 0.02;
-  const zoomed = vp.zoom && Math.abs(vp.zoom - 1) > 0.01;
+  const constrained = !!vp.constrained;
 
   if (matched) {
-    el.scaleInfo.innerHTML = `<span class="scale-ok">✓ Page width ${vp.layoutWidth}px matches Figma frame ${fw}px${zoomed ? ` (zoomed ${vp.zoom.toFixed(2)}×)` : ''}</span>`;
-    el.resetZoomBtn.classList.toggle('hidden', !zoomed);
+    el.scaleInfo.innerHTML = `<span class="scale-ok">✓ Page ${vp.layoutWidth}px matches Figma frame ${fw}px${constrained ? ' (constrained to frame width — UI reflowed)' : ''}</span>`;
+    el.resetZoomBtn.classList.toggle('hidden', !constrained);
   } else {
-    el.scaleInfo.innerHTML = `<span class="scale-warn">Page ${vp.layoutWidth}px vs Figma ${fw}px — <strong>${ratio.toFixed(2)}×</strong>. Width/Height shown as info until matched.</span>`;
+    el.scaleInfo.innerHTML = `<span class="scale-warn">Page ${vp.layoutWidth}px vs Figma ${fw}px — <strong>${ratio.toFixed(2)}×</strong>. Click “Match Figma width” to reflow the page to ${fw}px for an exact check.</span>`;
     el.resetZoomBtn.classList.add('hidden');
   }
 }
