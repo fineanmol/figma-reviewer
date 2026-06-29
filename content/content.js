@@ -592,11 +592,11 @@ if (window.__FDR_INJECTED__) {
     };
   }
 
-  // ── Match Figma width (zoom the page) ──────────────────────
-  // We can't make the browser window physically wider than it is, but we
-  // CAN zoom the page content so its layout width equals the Figma frame
-  // width — making absolute-px comparisons meaningful. We use CSS zoom on
-  // <html> (Chromium supports it and it reflows layout, unlike transform).
+  // ── Zoom helper ───────────────────────────────────────────
+  // "Match Figma width" now CONSTRAINS the page width (see matchFigmaWidth
+  // below) rather than zooming — that reflows responsive layouts correctly.
+  // currentZoom only reads any leftover CSS zoom so the marker/overlay
+  // coordinate helpers stay correct if a page sets zoom itself.
   function currentZoom() {
     const z = parseFloat(document.documentElement.style.zoom || '1');
     return isNaN(z) ? 1 : z;

@@ -7,7 +7,7 @@ Pixel-perfect comparison of your live frontend implementation against Figma desi
 ## What it does
 
 - **Overlay mode** — renders the Figma frame as a semi-transparent overlay on your live page, auto-fitted to your page width. Drag to align, and use the **Scale** slider to size the whole frame for full-screen review.
-- **Match Figma width** — zooms the page so its layout width equals the Figma frame width. This makes absolute px comparisons exact even when you're reviewing on a screen with a different size/DPR than the design was made for.
+- **Match Figma width** — constrains the page to the Figma frame's width so your **responsive UI actually reflows** to that width (the real layout the design targets), then aligns the overlay over it. This is a true width constraint, not a CSS zoom — columns/wrapping recalculate exactly as they would at the design width, so comparisons are accurate even on a much wider monitor.
 - **Element inspector** — click any DOM element to instantly compare its computed CSS against the Figma spec.
 - **Whole-tree / whole-page diff** — recursively match *every* node in the Figma frame to the page (by on-screen position) and diff each one, so you don't just check the outer layer of a component. Two modes: **Verify whole page** (auto-finds the page root) or **Pick a page root, then scan**. Results are grouped per node as a collapsible tree, and every matched node gets a colour-coded box on the page.
 - **On-page diff markers** — after a diff, a coloured box is drawn around the picked element on the page, listing the mismatches inline, plus the actual **gap spans** between children are highlighted and the **DOM path** of where the spacing comes from is shown — so you see *what* and *where* in context.
@@ -61,7 +61,7 @@ The panel loads a preview of the Figma node. Every node you fetch is added to **
 > Figma preview image URLs are temporary and can expire after a while. If a saved node's overlay image stops loading, just re-fetch its URL to refresh it.
 
 ### Step 4 — Match the viewport (recommended for px-accurate review)
-If the panel shows *"Page WIDTHpx vs Figma WIDTHpx — N×"*, your screen isn't the size the design was made for, so raw Width/Height diffs would be misleading (they're shown as **info** instead of errors). Click **Match Figma width** to zoom the page to the frame's width — now comparisons are exact. Click **Reset** to undo.
+If the panel shows *"Page WIDTHpx vs Figma WIDTHpx — N×"*, your screen isn't the size the design was made for, so raw Width/Height diffs would be misleading (they're shown as **info** instead of errors). Click **Match Figma width** — the page is constrained to the frame's width and your responsive layout **reflows** to match the design (this is a real width change, not a zoom, so columns/wrapping recalculate correctly). Now comparisons are exact. Click **Reset** to restore the page's natural width.
 
 ### Step 5 — Use the overlay
 The overlay appears automatically after fetch, auto-fitted to your page width.
