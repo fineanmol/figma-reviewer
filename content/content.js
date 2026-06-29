@@ -470,11 +470,13 @@ if (window.__FDR_INJECTED__) {
   }
 
   function rectToAbs(rect) {
+    // Store positions/sizes in the marker layer's document space (de-zoomed),
+    // so tree markers land correctly when "Match Figma width" zoom is active.
     return {
-      left: rect.left + window.scrollX,
-      top: rect.top + window.scrollY,
-      width: rect.width,
-      height: rect.height,
+      left: docX(rect.left),
+      top: docY(rect.top),
+      width: docSize(rect.width),
+      height: docSize(rect.height),
     };
   }
 
@@ -574,12 +576,19 @@ if (window.__FDR_INJECTED__) {
    * a frame designed at one layout width against a page at another.
    */
   function getViewportInfo() {
+    // When we've constrained the page to the Figma width, the meaningful
+    // "layout width" is the constrained body width, not the full window —
+    // that's what the design now maps onto.
+    const layoutWidth = widthConstraint
+      ? Math.round(document.body.getBoundingClientRect().width)
+      : document.documentElement.clientWidth;
     return {
-      layoutWidth:  document.documentElement.clientWidth,
+      layoutWidth,
       layoutHeight: document.documentElement.clientHeight,
       innerWidth:   window.innerWidth,
       dpr:          window.devicePixelRatio || 1,
       zoom:         currentZoom(),
+      constrained:  !!widthConstraint,
     };
   }
 
@@ -593,19 +602,95 @@ if (window.__FDR_INJECTED__) {
     return isNaN(z) ? 1 : z;
   }
 
+  // Convert a viewport coordinate (from getBoundingClientRect, which is in
+  // UNZOOMED px) into the marker/overlay layer's document space. Those layers
+  // live inside <html>, so when CSS zoom is applied for "Match Figma width"
+  // their coordinate space is scaled by the zoom — without dividing here the
+  // markers land far off (outside the screen). Returns document-space px.
+  function docX(viewportLeft) {
+    const z = currentZoom() || 1;
+    return viewportLeft / z + window.scrollX;
+  }
+  function docY(viewportTop) {
+    const z = currentZoom() || 1;
+    return viewportTop / z + window.scrollY;
+  }
+  // Width/height also need de-zooming to match the de-zoomed positions.
+  function docSize(px) {
+    const z = currentZoom() || 1;
+    return px / z;
+  }
+
+  // Saved inline styles so we can cleanly undo the width constraint.
+  let widthConstraint = null; // { htmlWidth, htmlMaxWidth, htmlMargin, bodyWidth, bodyMaxWidth, bodyMargin }
+
+  /**
+   * Make the PAGE actually render at the Figma frame's width, so a
+   * responsive layout reflows exactly as it would at that width — then the
+   * overlay can sit 1:1 over the real UI.
+   *
+   * We do NOT use CSS zoom: zoom scales a 2592px layout down, it does not
+   * re-flow it to the 1920px layout (wrong column counts, wrapping, etc.).
+   * Instead we constrain <html>/<body> to `figmaWidth` and center it, which
+   * forces the browser to lay the app out at that width for real.
+   */
   function matchFigmaWidth(figmaWidth) {
     if (!figmaWidth) return getViewportInfo();
-    // Reset first so we measure the true unscaled width.
-    document.documentElement.style.zoom = '1';
-    const trueWidth = document.documentElement.clientWidth;
-    const zoom = trueWidth / figmaWidth;     // e.g. 2592 / 1920 ≈ 1.35
-    document.documentElement.style.zoom = String(zoom);
+    const html = document.documentElement;
+    const body = document.body;
+
+    // Save originals once (so repeated calls don't lose them).
+    if (!widthConstraint) {
+      widthConstraint = {
+        htmlWidth:    html.style.width,
+        htmlMaxWidth: html.style.maxWidth,
+        htmlMargin:   html.style.margin,
+        htmlZoom:     html.style.zoom,
+        bodyWidth:    body.style.width,
+        bodyMaxWidth: body.style.maxWidth,
+        bodyMargin:   body.style.margin,
+        bodyOverflowX: body.style.overflowX,
+      };
+    }
+
+    // Clear any old zoom from earlier versions.
+    html.style.zoom = '';
+
+    const w = `${Math.round(figmaWidth)}px`;
+    // Constrain the body to the frame width and center it. Most apps anchor
+    // layout to body/its first container, so this drives the reflow.
+    body.style.width    = w;
+    body.style.maxWidth = w;
+    body.style.margin   = '0 auto';
+    // Let the viewport scroll horizontally if the frame is wider than screen.
+    html.style.overflowX = 'auto';
+
     zoomApplied = true;
-    return { ...getViewportInfo(), appliedZoom: zoom, trueWidth, figmaWidth };
+    return {
+      ...getViewportInfo(),
+      constrainedWidth: Math.round(figmaWidth),
+      effectiveWidth: body.getBoundingClientRect().width,
+      figmaWidth,
+    };
   }
 
   function resetZoom() {
-    document.documentElement.style.zoom = '1';
+    const html = document.documentElement;
+    const body = document.body;
+    if (widthConstraint) {
+      html.style.width    = widthConstraint.htmlWidth;
+      html.style.maxWidth = widthConstraint.htmlMaxWidth;
+      html.style.margin   = widthConstraint.htmlMargin;
+      html.style.zoom     = widthConstraint.htmlZoom;
+      body.style.width    = widthConstraint.bodyWidth;
+      body.style.maxWidth = widthConstraint.bodyMaxWidth;
+      body.style.margin   = widthConstraint.bodyMargin;
+      body.style.overflowX = widthConstraint.bodyOverflowX;
+      widthConstraint = null;
+    } else {
+      html.style.zoom = '1';
+    }
+    html.style.overflowX = '';
     zoomApplied = false;
     return getViewportInfo();
   }
@@ -866,8 +951,8 @@ if (window.__FDR_INJECTED__) {
 
     // Position the overlay's top-left over the reference element (document
     // space, so it scrolls with the page).
-    overlayEl.style.left = `${(rect.left / z) + window.scrollX}px`;
-    overlayEl.style.top  = `${(rect.top  / z) + window.scrollY}px`;
+    overlayEl.style.left = `${docX(rect.left)}px`;
+    overlayEl.style.top  = `${docY(rect.top)}px`;
     overlayEl.style.display = 'block';
 
     reportOverlaySize();
@@ -925,10 +1010,10 @@ if (window.__FDR_INJECTED__) {
     const box = document.createElement('div');
     Object.assign(box.style, {
       position:      'absolute',
-      left:          `${rect.left + window.scrollX}px`,
-      top:           `${rect.top + window.scrollY}px`,
-      width:         `${rect.width}px`,
-      height:        `${rect.height}px`,
+      left:          `${docX(rect.left)}px`,
+      top:           `${docY(rect.top)}px`,
+      width:         `${docSize(rect.width)}px`,
+      height:        `${docSize(rect.height)}px`,
       border:        `2px solid ${color}`,
       borderRadius:  '2px',
       boxShadow:     `0 0 0 3px ${color}33`,
@@ -989,10 +1074,10 @@ if (window.__FDR_INJECTED__) {
       const strip = document.createElement('div');
       Object.assign(strip.style, {
         position:      'absolute',
-        left:          `${s.left + window.scrollX}px`,
-        top:           `${s.top + window.scrollY}px`,
-        width:         `${Math.max(s.width, 2)}px`,
-        height:        `${Math.max(s.height, 2)}px`,
+        left:          `${docX(s.left)}px`,
+        top:           `${docY(s.top)}px`,
+        width:         `${Math.max(docSize(s.width), 2)}px`,
+        height:        `${Math.max(docSize(s.height), 2)}px`,
         background:    `${color}55`,
         outline:       `1px dashed ${color}`,
         pointerEvents: 'none',
@@ -1007,8 +1092,8 @@ if (window.__FDR_INJECTED__) {
       tag.textContent = `gap ${value}px · ${sourcePath}`;
       Object.assign(tag.style, {
         position:    'absolute',
-        left:        `${first.left + window.scrollX}px`,
-        top:         `${first.top + window.scrollY - 18}px`,
+        left:        `${docX(first.left)}px`,
+        top:         `${docY(first.top) - 18}px`,
         background:  color,
         color:       '#fff',
         fontSize:    '10px',

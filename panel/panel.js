@@ -135,17 +135,42 @@ function parseFigmaUrl(url) {
 }
 
 // ── Figma API ────────────────────────────────────────────────
-async function figmaFetch(path) {
-  const resp = await fetch(`https://api.figma.com/v1${path}`, {
-    headers: { 'X-Figma-Token': state.token },
-  });
-  if (resp.status === 403) throw new Error('Access denied — check your token has read access to this file.');
-  if (resp.status === 404) throw new Error('File or node not found. Make sure the URL includes the correct node-id.');
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({}));
-    throw new Error(body.message || `Figma API error (${resp.status})`);
+// NOTE on rate limits: Figma's REST API enforces per-token rate limits
+// server-side (HTTP 429). They cannot be disabled by the client — no header
+// or key tier removes them. The image-render endpoint is limited more
+// tightly than file reads. We mitigate by (a) caching node responses so the
+// same URL isn't re-fetched, and (b) retrying 429s with backoff that honours
+// the Retry-After header before surfacing a clear message.
+async function figmaFetch(path, { retries = 2 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const resp = await fetch(`https://api.figma.com/v1${path}`, {
+      headers: { 'X-Figma-Token': state.token },
+    });
+
+    if (resp.status === 429 && attempt < retries) {
+      // Respect Retry-After (seconds) if present, else exponential backoff.
+      const ra = parseInt(resp.headers.get('Retry-After'), 10);
+      const waitMs = (!isNaN(ra) ? ra : Math.pow(2, attempt) * 2) * 1000;
+      showToast(`Figma rate limit hit — retrying in ${Math.round(waitMs / 1000)}s…`, 'warning');
+      await new Promise(r => setTimeout(r, waitMs));
+      continue;
+    }
+
+    if (resp.status === 429) {
+      const ra = parseInt(resp.headers.get('Retry-After'), 10);
+      throw new Error(
+        `Figma rate limit reached. Wait ${!isNaN(ra) ? `${ra}s` : 'a minute'} and try again. ` +
+        `Tip: already-fetched nodes are cached — switch to them in Saved Nodes instead of re-fetching.`
+      );
+    }
+    if (resp.status === 403) throw new Error('Access denied — check your token has read access to this file.');
+    if (resp.status === 404) throw new Error('File or node not found. Make sure the URL includes the correct node-id.');
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.message || `Figma API error (${resp.status})`);
+    }
+    return resp.json();
   }
-  return resp.json();
 }
 
 async function verifyToken(token) {
@@ -609,6 +634,37 @@ function renderDiff(results) {
   el.diffSection.classList.remove('hidden');
 }
 
+// ── Align overlay to the just-picked reference element ───────
+async function alignOverlayToPicked() {
+  const doc = state.figmaData?.node?.document ?? state.figmaData?.node;
+  const bbox = doc?.absoluteBoundingBox;
+  if (!bbox?.width) { showToast('Frame has no dimensions to align to.', 'warning'); return; }
+
+  const res = await sendToPage({
+    type: 'FDR_ALIGN_OVERLAY',
+    frameWidth:  bbox.width,
+    frameHeight: bbox.height,
+  });
+  if (!res?.ok) {
+    showToast(res?.reason ? `Align failed: ${res.reason}` : 'Align failed.', 'error');
+    return;
+  }
+
+  // Reflect the overlay being on, and update the Scale readout.
+  el.overlayToggle.checked = true;
+  await sendToPage({ type: 'FDR_TOGGLE_OVERLAY', visible: true });
+  await sendToPage({ type: 'FDR_SET_OPACITY', opacity: parseInt(el.opacitySlider.value, 10) / 100 });
+
+  showToast(`Overlay aligned to ${res.refPath} (${Math.round(res.scale * 100)}%)`, 'success');
+
+  // Offer to diff the aligned region so found issues are actionable/exportable.
+  const go = confirm(
+    `Overlay aligned to:\n${res.refPath}\n\nRun a full diff of this region now? ` +
+    `You'll get a per-node issue list you can export.`
+  );
+  if (go) runTreeDiff('picked');
+}
+
 // ── Tree / Whole-page Diff ───────────────────────────────────
 // Recursively diff every node in the active Figma frame against the page.
 // rootSel: 'auto' (whole page) or 'picked' (use the picked element as root).
@@ -932,11 +988,48 @@ function renderSavedNodes() {
  * the scale info, and reset any prior diff. Used by both fetch and the
  * saved-node switcher so behaviour is identical either way.
  */
+// Figma image URLs are temporary and expire. Node DATA is cached forever
+// (so diffs never re-fetch), but if the overlay image is dead we re-fetch
+// just that one image URL on demand and update the cached node.
+function imageLoads(url) {
+  return new Promise(resolve => {
+    if (!url) { resolve(false); return; }
+    const img = new Image();
+    const done = ok => { img.onload = img.onerror = null; resolve(ok); };
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    img.src = url;
+    // Guard against a hung request.
+    setTimeout(() => done(false), 6000);
+  });
+}
+
+async function ensureFreshImage(node) {
+  if (await imageLoads(node.imageUrl)) return node.imageUrl;
+  if (!state.token) return node.imageUrl; // can't refresh without a token
+  try {
+    const imageData = await loadImage(node.fileKey, node.nodeId);
+    const fresh = Object.values(imageData.images)[0] ?? null;
+    if (fresh) {
+      node.imageUrl = fresh;
+      // Persist the refreshed URL back into the saved list.
+      const i = state.savedNodes.findIndex(n => n.id === node.id);
+      if (i >= 0) state.savedNodes[i].imageUrl = fresh;
+    }
+  } catch {
+    // Rate-limited or offline — keep the (dead) URL; diffs still work.
+  }
+  return node.imageUrl;
+}
+
 async function activateNode(node) {
   state.figmaData = node;
   state.lastDom = null;
   state.diffResults = [];
   state.treeGroups = [];
+
+  // Refresh the overlay image only if the cached one has expired.
+  await ensureFreshImage(node);
 
   // Preview
   el.componentName.textContent = node.name;
@@ -1107,6 +1200,21 @@ async function handleFetch() {
     return;
   }
 
+  // Cache hit: if we already fetched this exact node, just re-activate it
+  // instead of calling the API again — avoids burning rate limit on repeats.
+  // (nodeId here is colon-normalised; saved ids use the resolved node key, so
+  // match on either the requested or resolved form.)
+  const wantKey = nodeKeyOf(parsed.fileKey, parsed.nodeId);
+  const cached = state.savedNodes.find(n =>
+    n.id === wantKey || (n.fileKey === parsed.fileKey && n.nodeId === parsed.nodeId)
+  );
+  if (cached) {
+    await activateNode(cached);
+    el.figmaUrl.value = '';
+    showToast(`Loaded from cache: ${cached.name}`, 'success');
+    return;
+  }
+
   el.fetchBtn.disabled = true;
   el.fetchBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Fetching…`;
 
@@ -1190,14 +1298,15 @@ el.overlayScaleSlider.addEventListener('input', () => {
   });
 });
 
-// Match Figma width — zoom the page so its layout width == the frame width.
+// Match Figma width — constrain the PAGE to the frame width so the UI
+// reflows at that width, THEN re-fit the overlay over the corrected page.
 el.matchWidthBtn.addEventListener('click', async () => {
   const fw = figmaFrameWidth();
   if (!fw) { showToast('No frame dimensions to match.', 'warning'); return; }
   const res = await sendToPage({ type: 'FDR_MATCH_WIDTH', figmaWidth: fw });
-  if (res?.appliedZoom) {
-    showToast(`Page zoomed to ${res.appliedZoom.toFixed(2)}× to match ${fw}px`, 'success');
-    // Re-fit the overlay to the new layout width.
+  if (res?.constrainedWidth) {
+    showToast(`Page constrained to ${res.constrainedWidth}px — UI reflowed to match Figma`, 'success');
+    // Now that the page is at the frame width, fit the overlay over it (1:1).
     const bbox = (state.figmaData?.node?.document ?? state.figmaData?.node)?.absoluteBoundingBox;
     if (bbox && state.figmaData?.imageUrl) {
       await sendToPage({ type: 'FDR_SET_OVERLAY', imageUrl: state.figmaData.imageUrl, width: bbox.width, height: bbox.height, fit: true });
@@ -1206,7 +1315,7 @@ el.matchWidthBtn.addEventListener('click', async () => {
   await refreshScaleInfo();
 });
 
-// Reset zoom back to 1×.
+// Reset — remove the width constraint, restore the page's natural layout.
 el.resetZoomBtn.addEventListener('click', async () => {
   await sendToPage({ type: 'FDR_RESET_ZOOM' });
   const bbox = (state.figmaData?.node?.document ?? state.figmaData?.node)?.absoluteBoundingBox;
@@ -1214,7 +1323,7 @@ el.resetZoomBtn.addEventListener('click', async () => {
     await sendToPage({ type: 'FDR_SET_OVERLAY', imageUrl: state.figmaData.imageUrl, width: bbox.width, height: bbox.height, fit: true });
   }
   await refreshScaleInfo();
-  showToast('Zoom reset to 100%', 'info');
+  showToast('Page width restored', 'info');
 });
 
 // Element picker
@@ -1229,8 +1338,8 @@ function resetPicker() {
   el.pickBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg> Pick Element on Page`;
 }
 
-el.pickBtn.addEventListener('click', () => { state.pickingRoot = false; startPicker(); });
-el.repickBtn.addEventListener('click', () => { state.pickingRoot = false; startPicker(); });
+el.pickBtn.addEventListener('click', () => { state.pickingRoot = false; state.pickingAlign = false; startPicker(); });
+el.repickBtn.addEventListener('click', () => { state.pickingRoot = false; state.pickingAlign = false; startPicker(); });
 
 // Whole-page tree diff (auto root)
 el.verifyPageBtn.addEventListener('click', () => runTreeDiff('auto'));
@@ -1309,6 +1418,15 @@ chrome.runtime.onMessage.addListener((message) => {
     if (!state.figmaData?.node) {
       showToast('Fetch a Figma component first, then pick an element.', 'warning');
       state.pickingRoot = false;
+      state.pickingAlign = false;
+      return;
+    }
+
+    // If this pick was to align the overlay, scale+position it over the
+    // chosen reference element, then offer to diff the aligned region.
+    if (state.pickingAlign) {
+      state.pickingAlign = false;
+      alignOverlayToPicked();
       return;
     }
 
@@ -1336,6 +1454,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === 'FDR_PICKER_CANCELLED') {
     resetPicker();
+    state.pickingRoot = false;
+    state.pickingAlign = false;
   }
 
   // Keep the panel's Scale slider in sync when the user resizes the

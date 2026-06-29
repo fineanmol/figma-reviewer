@@ -64,12 +64,14 @@ The panel loads a preview of the Figma node. Every node you fetch is added to **
 If the panel shows *"Page WIDTHpx vs Figma WIDTHpx — N×"*, your screen isn't the size the design was made for, so raw Width/Height diffs would be misleading (they're shown as **info** instead of errors). Click **Match Figma width** to zoom the page to the frame's width — now comparisons are exact. Click **Reset** to undo.
 
 ### Step 5 — Use the overlay
-The overlay appears automatically after fetch, fitted to your page width.
+The overlay appears automatically after fetch, auto-fitted to your page width.
 - Toggle **Show Figma overlay** on/off
 - Adjust **opacity** with the slider
 - Adjust **Scale** to size the whole frame (useful for reviewing full screens)
 - **Drag the purple bar** at the top-left of the overlay to move it over your implementation
 - Use the **− / +** buttons on that bar, or **drag the purple square** at the bottom-right corner, to resize the overlay directly on the page (it keeps its aspect ratio). The panel's Scale slider stays in sync.
+
+> **Scale looks wrong (too big / too small)?** Auto-fit assumes your UI fills the viewport, so it's off for centered or narrower layouts. Click **Align overlay to element** and pick the page element that matches the Figma frame (e.g. your page/app container). The overlay snaps to that element's exact on-screen size and position — 1:1, regardless of viewport width or zoom. It then offers to run a full diff of that region so any mismatches you spot become an exportable issue list.
 
 ### Step 5 — Pick an element
 Click **Pick Element on Page** → hover over any element (it highlights in purple) → click it.
@@ -151,9 +153,10 @@ Example output:
 
 ## Limitations
 
-- Full-page overlay works best on fixed/known viewport sizes. For responsive layouts, use component-by-component comparison.
+- Full-page overlay works best on fixed/known viewport sizes. For responsive layouts, use **Align overlay to element** or component-by-component comparison.
 - Cross-origin stylesheets (CDN fonts, external CSS) cannot be scanned for tokens — the extension scans only same-origin sheets.
 - Figma components inside locked/private team libraries require the user to have explicit file access.
+- **Figma API rate limits are enforced by Figma, not the extension, and cannot be disabled.** The REST API returns HTTP 429 when a per-token limit is exceeded (the image-render endpoint is limited more tightly than file reads). The extension mitigates this: fetched node data is **cached** (re-fetching the same URL or switching between Saved Nodes makes no API call), 429s are **retried with backoff** (honouring `Retry-After`), and a node's overlay image is only re-fetched when its temporary URL has expired. If you do hit a limit, wait the indicated time — your already-fetched nodes still diff offline from cache.
 
 ---
 
@@ -162,6 +165,10 @@ Example output:
 **"Access denied"** — Your token doesn't have read access to this file. Check that you have been shared the Figma file.
 
 **"Node not found"** — The URL must include a `node-id` parameter. Right-click a specific frame or component in Figma (not just the file).
+
+**"Figma rate limit reached"** — You've made too many API calls in a short window (Figma enforces this; it can't be turned off). Wait the indicated time. To avoid it: re-use **Saved Nodes** (cached, no API call) instead of re-fetching, and avoid repeatedly fetching new image-heavy nodes in quick succession.
+
+**Red boxes/markers appear off-screen or misaligned** — This was a zoom bug; fixed. If you still see it, make sure you've reloaded the extension and the tab so the latest content script is loaded. Markers now de-zoom correctly when **Match Figma width** is active.
 
 **Overlay doesn't appear** — Make sure the **Show Figma overlay** toggle is on and you're on a normal `http(s)` page (not `chrome://`, the Web Store, or a PDF). If you just installed the extension, reload the tab once so the content script is present. Some pages with strict CSP headers may still block the overlay image — use element inspector mode instead.
 
