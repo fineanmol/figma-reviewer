@@ -24,19 +24,30 @@ Pixel-perfect comparison of your live frontend implementation against Figma desi
 
 ## Installation
 
-### 1. Get a Figma Personal Access Token
+### 1. Install the extension
+
+**From the Chrome Web Store** (recommended): search for "Figma Design Reviewer"
+and click **Add to Chrome**. _(Store listing pending publication.)_
+
+### 2. Get a Figma Personal Access Token
 
 1. Go to **Figma → Settings → Personal access tokens**
 2. Click **Generate new token**, give it a name, and copy it
-3. You only need the **File content: Read** scope
+3. Set the scope to **File content: Read-only** — that's all the extension needs
 
-### 2. Load the extension in Chrome
+Your token is stored locally in your browser and sent only to `api.figma.com`.
+See [PRIVACY.md](PRIVACY.md).
 
-1. Open Chrome and go to `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select the `figma-reviewer/` folder (this folder)
-5. The extension icon will appear in your toolbar
+---
+
+## Development / loading from source
+
+If you're working on the extension (not a store user):
+
+1. Open Chrome → `chrome://extensions`
+2. Enable **Developer mode** (top-right)
+3. Click **Load unpacked** and select this folder
+4. To build the publishable zip (runtime files only): `./package-extension.sh`
 
 ---
 
@@ -181,3 +192,28 @@ Example output:
 **Gap shows a mismatch but it looks right** — The tool measures the *rendered* distance between the element's children and descends through wrapper elements to find where the spacing comes from. If it still misreads, check that the children are real flow elements (not absolutely positioned) and that the spacing is consistent between them — the reported value is the most common measured gap. The note under the row tells you which node/mechanism it measured.
 
 **Token map is empty** — PrimeVue may not be loaded on this page, or the stylesheet is cross-origin. The diff still works; you just won't see token names.
+
+---
+
+## Chrome Web Store submission checklist
+
+Before submitting, complete these (code is ready; these are assets/dashboard steps):
+
+- [ ] **Privacy policy hosted at a public URL** and entered in the Developer
+      Dashboard → Privacy tab. Source: [PRIVACY.md](PRIVACY.md) — **must be
+      reviewed/approved by your team and given a real contact email first.**
+- [ ] **Data-use disclosures** ticked in the dashboard: collects *Authentication
+      information* (the Figma token); used only to operate the feature; **not**
+      sold; **not** used for unrelated purposes; **not** for creditworthiness.
+- [ ] **Screenshots** — at least one 1280×800 (or 640×400). Suggested set: (1)
+      connect screen, (2) overlay on a live page, (3) single-element diff, (4)
+      whole-tree report with on-page markers.
+- [ ] **Promo tile** 440×280 (optional but recommended).
+- [ ] **Category:** Developer Tools.
+- [ ] **Permission justifications** ready: `activeTab`+`scripting` (inject the
+      comparison UI only when the user acts), `storage` (save token/nodes/prefs
+      locally), `sidePanel` (UI), host `https://api.figma.com/*` (Figma API).
+- [ ] **Package with `./package-extension.sh`** so only runtime files ship
+      (Agent.md, README, PRIVACY, LICENSE, and scripts are excluded).
+- [ ] Single-purpose description set; the listing leads with the general value,
+      not just "PrimeVue".

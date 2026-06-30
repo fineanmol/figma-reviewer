@@ -782,3 +782,39 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* ── Action toast (replaces native confirm) ──────────── */
+.toast-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.toast-btn {
+  flex-shrink: 0;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast-btn:hover { background: #8b5de8; }
+.toast-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* ── Auth privacy notice ─────────────────────────────── */
+.auth-privacy {
+  margin-top: 14px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+}
+.auth-privacy strong { color: var(--text); }
+.auth-privacy a { color: var(--accent); text-decoration: none; }
+.auth-privacy a:hover { text-decoration: underline; }

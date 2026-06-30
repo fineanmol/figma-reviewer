@@ -63,13 +63,22 @@
           <a
             href="https://www.figma.com/settings"
             target="_blank"
+            rel="noopener noreferrer"
             class="help-link"
           >
-            Get token: Figma → Settings → Personal Access Tokens →
+            Get a token: Figma → Settings → Personal Access Tokens (scope: <strong>File content → Read-only</strong>)
           </a>
         </div>
 
         <button id="save-token-btn" class="btn btn-primary btn-full">Connect to Figma</button>
+
+        <p class="auth-privacy">
+          🔒 Your token is stored <strong>locally in this browser only</strong> and sent
+          <strong>only to api.figma.com</strong> to read your files. It is never sent anywhere else,
+          and the pages you inspect are read locally and never uploaded.
+          If this device is shared, <a href="https://www.figma.com/settings" target="_blank" rel="noopener noreferrer">revoke the token in Figma</a> when done.
+          See our <a href="https://github.com/" target="_blank" rel="noopener noreferrer" id="privacy-link">privacy policy</a>.
+        </p>
       </div>
     </div>
 

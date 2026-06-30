@@ -24,6 +24,20 @@ function nodeKeyOf(fileKey, nodeId) {
   return `${fileKey}:${nodeId}`;
 }
 
+// Drop any corrupt/incomplete entries from persisted savedNodes so a bad
+// record (from a crash, version skew, or tampered storage) can't crash the
+// panel when it later reads node.node.document.
+function sanitizeSavedNodes(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(n =>
+    n && typeof n === 'object' &&
+    typeof n.id === 'string' &&
+    typeof n.fileKey === 'string' &&
+    typeof n.nodeId === 'string' &&
+    n.node && typeof n.node === 'object'
+  );
+}
+
 // ── DOM refs ─────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -95,6 +109,29 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 
+// A non-blocking toast with an action button — replaces window.confirm(),
+// which is jarring (and discouraged) inside a side panel. Stays up longer.
+function showActionToast(message, actionLabel, onAction, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type} toast-action`;
+  const text = document.createElement('span');
+  text.textContent = message;
+  const btn = document.createElement('button');
+  btn.className = 'toast-btn';
+  btn.textContent = actionLabel;
+  let done = false;
+  const dismiss = () => {
+    if (done) return; done = true;
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  };
+  btn.addEventListener('click', () => { dismiss(); onAction(); });
+  toast.append(text, btn);
+  el.toastContainer.appendChild(toast);
+  requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('show')));
+  setTimeout(dismiss, 8000);
+}
+
 function setLoading(btn, loading, label, loadingLabel) {
   btn.disabled = loading;
   // preserve inner SVG if present
@@ -142,11 +179,26 @@ function parseFigmaUrl(url) {
 // tightly than file reads. We mitigate by (a) caching node responses so the
 // same URL isn't re-fetched, and (b) retrying 429s with backoff that honours
 // the Retry-After header before surfacing a clear message.
-async function figmaFetch(path, { retries = 2 } = {}) {
+async function figmaFetch(path, { retries = 2, timeoutMs = 20000 } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const resp = await fetch(`https://api.figma.com/v1${path}`, {
-      headers: { 'X-Figma-Token': state.token },
-    });
+    // Abort a hung request so the UI button re-enables instead of spinning.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let resp;
+    try {
+      resp = await fetch(`https://api.figma.com/v1${path}`, {
+        headers: { 'X-Figma-Token': state.token },
+        signal: ctrl.signal,
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Figma request timed out. Check your connection and try again.');
+      }
+      // Network failure (offline, DNS, CORS) surfaces as TypeError.
+      throw new Error('Network error — couldn’t reach Figma. Check your connection.');
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (resp.status === 429 && attempt < retries) {
       // Respect Retry-After (seconds) if present, else exponential backoff.
@@ -175,9 +227,21 @@ async function figmaFetch(path, { retries = 2 } = {}) {
 }
 
 async function verifyToken(token) {
-  const resp = await fetch('https://api.figma.com/v1/me', {
-    headers: { 'X-Figma-Token': token },
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  let resp;
+  try {
+    resp = await fetch('https://api.figma.com/v1/me', {
+      headers: { 'X-Figma-Token': token },
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('Request timed out — check your connection.');
+    throw new Error('Network error — couldn’t reach Figma. Check your connection.');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (resp.status === 429) throw new Error('Figma rate limit reached. Wait a minute and try again.');
   if (!resp.ok) throw new Error('Token is invalid or expired.');
   return resp.json();
 }
@@ -588,20 +652,24 @@ function renderDiff(results) {
     const icon     = iconMap[r.status];
     const cls      = classMap[r.status];
 
-    // Colour swatches
+    // Colour swatches. Values are escaped, and a colour is only used in the
+    // style attribute if it's a strict hex — otherwise it's escaped text —
+    // so a page-derived "value" can never inject markup or CSS.
     const renderVal = (val, isColor) => {
-      if (isColor && val?.startsWith('#')) {
-        return `<span class="color-swatch" style="background:${val}"></span>${val}`;
+      if (val === null || val === undefined) return '—';
+      const safe = escapeHtml(String(val));
+      if (isColor && /^#[0-9a-fA-F]{3,8}$/.test(String(val))) {
+        return `<span class="color-swatch" style="background:${safe}"></span>${safe}`;
       }
-      return val ?? '—';
+      return safe;
     };
 
     const tokenHtml = r.token
-      ? `<div class="token-info">Token in use: <code>${r.token}</code></div>`
+      ? `<div class="token-info">Token in use: <code>${escapeHtml(String(r.token))}</code></div>`
       : '';
 
     const noteHtml = r.note
-      ? `<div class="diff-note">${r.note}</div>`
+      ? `<div class="diff-note">${escapeHtml(String(r.note))}</div>`
       : '';
 
     const valuesHtml = r.status === 'match'
@@ -624,7 +692,7 @@ function renderDiff(results) {
     row.innerHTML = `
       <div class="diff-row-header">
         <span class="diff-icon ${cls}">${icon}</span>
-        <span class="diff-label">${r.label}</span>
+        <span class="diff-label">${escapeHtml(String(r.label))}</span>
         <span class="diff-status ${cls}">${r.status}</span>
       </div>
       ${valuesHtml}
@@ -656,14 +724,14 @@ async function alignOverlayToPicked() {
   await sendToPage({ type: 'FDR_TOGGLE_OVERLAY', visible: true });
   await sendToPage({ type: 'FDR_SET_OPACITY', opacity: parseInt(el.opacitySlider.value, 10) / 100 });
 
-  showToast(`Overlay aligned to ${res.refPath} (${Math.round(res.scale * 100)}%)`, 'success');
-
-  // Offer to diff the aligned region so found issues are actionable/exportable.
-  const go = confirm(
-    `Overlay aligned to:\n${res.refPath}\n\nRun a full diff of this region now? ` +
-    `You'll get a per-node issue list you can export.`
+  // Offer to diff the aligned region via a non-blocking action toast (no
+  // native confirm() in a side panel).
+  showActionToast(
+    `Overlay aligned (${Math.round(res.scale * 100)}%). Diff this region?`,
+    'Run diff',
+    () => runTreeDiff('picked'),
+    'success'
   );
-  if (go) runTreeDiff('picked');
 }
 
 // ── Tree / Whole-page Diff ───────────────────────────────────
@@ -931,10 +999,26 @@ function exportMarkdown() {
 // user switch between several components instead of re-pasting URLs.
 
 async function persistNodes() {
-  await chrome.storage.local.set({
-    savedNodes: state.savedNodes,
-    activeNodeId: state.figmaData?.id ?? null,
-  });
+  try {
+    await chrome.storage.local.set({
+      savedNodes: state.savedNodes,
+      activeNodeId: state.figmaData?.id ?? null,
+      schemaVersion: 1,
+    });
+  } catch (err) {
+    // Most likely QUOTA_BYTES exceeded — a saved node's tree is large.
+    // Drop the oldest saved nodes and retry once so we don't corrupt state.
+    if (state.savedNodes.length > 1) {
+      state.savedNodes = state.savedNodes.slice(0, Math.ceil(state.savedNodes.length / 2));
+      try {
+        await chrome.storage.local.set({ savedNodes: state.savedNodes, activeNodeId: state.figmaData?.id ?? null, schemaVersion: 1 });
+        showToast('Storage was full — kept the most recent saved nodes.', 'warning');
+        renderSavedNodes();
+        return;
+      } catch {/* fall through */}
+    }
+    showToast('Couldn’t save — browser storage is full. Try “clear all”.', 'error');
+  }
 }
 
 function upsertSavedNode(node) {
@@ -967,9 +1051,16 @@ function renderSavedNodes() {
     const isActive = state.figmaData?.id === n.id;
     const row = document.createElement('div');
     row.className = `saved-node${isActive ? ' active' : ''}`;
+    // Escape the Figma layer name (attacker-controllable in a shared file)
+    // for both text and the title attribute; only render the thumbnail if
+    // the image URL is a real https/data URL.
+    const safeName = escapeHtml(String(n.name ?? 'Component'));
+    const safeImg = /^(https:|data:image\/)/.test(n.imageUrl || '')
+      ? `<img src="${escapeHtml(n.imageUrl)}" alt="" />`
+      : '<span>—</span>';
     row.innerHTML = `
-      <div class="saved-node-thumb">${n.imageUrl ? `<img src="${n.imageUrl}" alt="" />` : '<span>—</span>'}</div>
-      <span class="saved-node-name" title="${n.name}">${n.name}</span>
+      <div class="saved-node-thumb">${safeImg}</div>
+      <span class="saved-node-name" title="${safeName}">${safeName}</span>
       ${isActive ? '<span class="saved-node-badge">active</span>' : ''}
       <button class="saved-node-del text-btn small" title="Remove">✕</button>
     `;
@@ -1090,7 +1181,11 @@ async function sendToPage(message) {
   const tab = await getActiveTab();
   if (!tab?.id) return null;
 
-  if (tab.url && !/^https?:|^file:/.test(tab.url)) {
+  // We no longer hold the "tabs" permission, so tab.url is usually undefined
+  // here — the restricted-page check can't rely on it. When the URL IS
+  // available (e.g. a prior activeTab grant) and is clearly restricted, fail
+  // fast; otherwise we detect a restricted page from the injection failure.
+  if (tab.url && !/^(https?:|file:)/.test(tab.url)) {
     showToast('This page can’t run the reviewer (chrome:// or store page).', 'warning');
     return null;
   }
@@ -1104,7 +1199,15 @@ async function sendToPage(message) {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
       return await chrome.tabs.sendMessage(tab.id, message);
     } catch (err) {
-      showToast('Couldn’t reach the page. Try reloading the tab.', 'error');
+      // Chrome blocks injection into chrome://, the Web Store, the PDF viewer,
+      // view-source:, and other restricted pages — surface a clear message
+      // for that case instead of a generic "couldn't reach the page".
+      const msg = String(err && err.message || err);
+      if (/cannot be scripted|Cannot access|chrome:\/\/|extension gallery|showing error page|The extensions gallery/i.test(msg)) {
+        showToast('This page can’t run the reviewer (chrome://, Web Store, or PDF).', 'warning');
+      } else {
+        showToast('Couldn’t reach the page. Try reloading the tab.', 'error');
+      }
       return null;
     }
   }
@@ -1165,7 +1268,7 @@ async function handleSaveToken() {
     showScreen('main');
     // Restore any previously saved nodes for this session.
     const saved = await chrome.storage.local.get(['savedNodes']);
-    state.savedNodes = Array.isArray(saved.savedNodes) ? saved.savedNodes : [];
+    state.savedNodes = sanitizeSavedNodes(saved.savedNodes);
     renderSavedNodes();
     showToast(`Welcome, ${user.name}!`, 'success');
   } catch (err) {
@@ -1516,7 +1619,7 @@ async function init() {
   showScreen('main');
 
   // Restore saved nodes across refresh, and re-activate the last one used.
-  state.savedNodes = Array.isArray(data.savedNodes) ? data.savedNodes : [];
+  state.savedNodes = sanitizeSavedNodes(data.savedNodes);
   renderSavedNodes();
 
   const last = state.savedNodes.find(n => n.id === data.activeNodeId) ?? state.savedNodes[0];

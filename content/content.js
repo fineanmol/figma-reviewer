@@ -55,6 +55,13 @@ if (window.__FDR_INJECTED__) {
     return map;
   }
 
+  // Escape text before it goes into any innerHTML we build on the page.
+  // Figma node names and DOM-derived strings are untrusted.
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   // ── DOM Path ──────────────────────────────────────────────
   // Build a short, readable CSS-ish path to an element so the panel can
   // tell the developer *where* a value actually lives in the DOM.
@@ -332,6 +339,7 @@ if (window.__FDR_INJECTED__) {
    */
   function matchTree(figmaNodes, rootSel) {
     if (!figmaNodes?.length) return { ok: false, reason: 'no figma nodes' };
+    if (!document.body) return { ok: false, reason: 'page has no <body> to scan' };
 
     const tokenMap = buildTokenMap(); // build ONCE, reuse for every node
 
@@ -550,9 +558,9 @@ if (window.__FDR_INJECTED__) {
       if (hasIssue && info) {
         box.addEventListener('mouseenter', () => {
           tip.innerHTML =
-            `<strong style="color:${color}">${info.name}</strong>` +
+            `<strong style="color:${color}">${escapeHtml(info.name)}</strong>` +
             (info.lines?.length
-              ? '<br>' + info.lines.map(l => `&bull; ${l}`).join('<br>')
+              ? '<br>' + info.lines.map(l => `&bull; ${escapeHtml(l)}`).join('<br>')
               : '<br>(see panel for details)');
           tip.style.display = 'block';
         });
@@ -1053,7 +1061,7 @@ if (window.__FDR_INJECTED__) {
 
     if (lines?.length) {
       const detail = document.createElement('div');
-      detail.innerHTML = lines.map(l => `&bull; ${l}`).join('<br>');
+      detail.innerHTML = lines.map(l => `&bull; ${escapeHtml(l)}`).join('<br>');
       Object.assign(detail.style, {
         position:    'absolute',
         top:         '100%',
@@ -1134,7 +1142,7 @@ if (window.__FDR_INJECTED__) {
 
   function activatePicker() {
     pickerActive = true;
-    document.body.style.cursor = 'crosshair';
+    if (document.body) document.body.style.cursor = 'crosshair';
     document.addEventListener('mouseover', onHover);
     document.addEventListener('click',     onClick, { capture: true });
     document.addEventListener('keydown',   onKeydown);
@@ -1220,7 +1228,13 @@ if (window.__FDR_INJECTED__) {
   }
 
   // ── Message Listener ───────────────────────────────────────
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // Only accept messages from our own extension (panel/background), never
+    // from the page or another extension.
+    if (sender.id && sender.id !== chrome.runtime.id) return;
+    if (!msg || typeof msg.type !== 'string') { sendResponse({ ok: false }); return; }
+
+    try {
     switch (msg.type) {
 
       case 'FDR_PING':
@@ -1325,6 +1339,10 @@ if (window.__FDR_INJECTED__) {
       default:
         // Unknown message — respond so the panel's await doesn't hang.
         sendResponse({ ok: false, unknown: msg.type });
+    }
+    } catch (err) {
+      // Never let a handler throw silently leave the panel awaiting forever.
+      try { sendResponse({ ok: false, error: String(err && err.message || err) }); } catch {}
     }
     // All responses above are synchronous; no need to keep the channel open.
   });
